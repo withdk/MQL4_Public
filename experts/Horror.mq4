@@ -1,33 +1,131 @@
 //+------------------------------------------------------------------+
 //|                                                       Horror.mq4 |
-//|                        Copyright 2017, MetaQuotes Software Corp. |
-//|                                             https://www.mql5.com |
+//|                                Copyright 2017, David Kierznowski |
+//|                                        https://github.com/withdk |
 //+------------------------------------------------------------------+
+
+/* Horror Expert Advisor
+   A simple bot that allows you place and manage trades through lines and buttons.
+   It's fairly customised to the way I trade but it can be easily modified.
+
+   Changelog
+   v1.04 Fixed bug where the entry line bid price would not update or unselect.
+         Added new method of identifying direction of trade (isBuy/isSell).
+         Refactored the buttons code using structs, seems cleaner.
+         Cleaned up code a bit and added some comments.
+         Added Close Trade, Select lines, + and - buttons for further trade mgmt.
+*/
+
 #property copyright "Copyright 2017, David Kierznowski"
-#property link      "https://www.mql5.com"
+#property link      "https://github.com/withdk"
 #property version   "1.04"
 #property strict
-
-/* Change log
-v1.04 Fixed bug where the entry line bid price would not update or unselect.
-*/
 
 #include <DKSpecialInclude.mqh>
 
 input double FixedLotSize=0.1;
-input color LineColor=Black;
+input const color LineColor=Black;
 input bool UseTarget=False;
 input bool UseBreakEven=True;
 input int LineStyle=STYLE_DASH;
 extern int MagicNumber=31337;
 extern double HorizontalLinePrice;
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+struct buttons_struct
+  {
+   long              id; // chart id always 0
+   string            name; // object name
+   int               x; // x coord.
+   int               y; // y coord.
+   int               w; // button width
+   int               h; // button height
+   ENUM_BASE_CORNER  corner; // anchor always 0
+   string            value; // value of button on screen
+  };
+buttons_struct BTN[11];
+
+string button_names[]=
+  {
+   "Button_BuyEntryOnHigh",
+   "Button_BuyEntryOnClose",
+   "Button_SellEntryOnLow",
+   "Button_SellEntryOnClose",
+   "Button_BringToBreakEven",
+   "Button_CloseTrade",
+   "Button_SelectLine",
+   "Button_MoveUp",
+   "Button_MoveDown",
+   "Button_ActEntry",
+   "Button_DeactEntry"
+  };
+
+string button_vals[]=
+  {
+   "Buy High",
+   "Buy Close",
+   "Sell Low",
+   "Sell Close",
+   "BreakEven",
+   "Close Trade",
+   "Select Line",
+   "+",
+   "-",
+   "Activate",
+   "Deactivate"
+  };
+
+int button_x_vals[]=
+  {
+   0,
+   100,
+   0,
+   100,
+   0,
+   100,
+   0,
+   100,
+   145,
+   0,
+   100
+  };
+
+int button_y_vals[]=
+  {
+   20,
+   20,
+   70,
+   70,
+   120,
+   120,
+   170,
+   170,
+   170,
+   220,
+   220
+  };
+
+// Create array of lines used for easy access
+string HorrorLines[]=
+  {
+   "HLine",
+   "StopBLine",
+   "StopSLine",
+   "TargBLine",
+   "TargSLine",
+   "BreakEvenBLine",
+   "BreakEvenSLine"
+  };
 
 static double LastY;
 static int UseSlippage;
 static int Ticket=0;
 static double OpenPrice;
 double UsePoint;
-double PriceAtClick;
+bool ValidSetup;
+bool isBuy;
+bool isSell;
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
@@ -43,14 +141,10 @@ int OnInit()
    LastY=HorizontalLinePrice;
    UseSlippage=GetSlippage(Symbol(),3);
    UsePoint=PipPoint(Symbol());
-   PriceAtClick=0;
-   CreateBtn(0,"Button_BuyEntryOnHigh1",0,20,60,20,0,"BHigh");
-   CreateBtn(0,"Button_BuyEntryOnClose1",70,20,60,20,0,"BClose");
-
-   CreateBtn(0,"Button_SellEntryOnLow1",0,50,60,20,0,"SLow");
-   CreateBtn(0,"Button_SellEntryOnClose1",70,50,60,20,0,"SClose");
-
-   CreateBtn(0,"Button_BringToBreakEven",0,80,60,20,0,"BrkEven");
+   ValidSetup=False;
+   isBuy=False;
+   isSell=False;
+   CreateButtons();
    Print(GetLastError());
 //---
    return(INIT_SUCCEEDED);
@@ -60,19 +154,9 @@ int OnInit()
 //+------------------------------------------------------------------+
 void OnDeinit(const int reason)
   {
-//---
-   ObjectDelete("HLine");
-   ObjectDelete("StopBLine");
-   ObjectDelete("StopSLine");
-   ObjectDelete("TargBLine");
-   ObjectDelete("TargSLine");
-   ObjectDelete("BreakEvenBLine");
-   ObjectDelete("BreakEvenSLine");
-   ObjectDelete("Button_BuyEntryOnHigh1");
-   ObjectDelete("Button_SellEntryOnLow1");
-   ObjectDelete("Button_BuyEntryOnClose1");
-   ObjectDelete("Button_SellEntryOnClose1");
-   ObjectDelete("Button_BringToBreakEven");
+   for(int i=0;i<ArraySize(HorrorLines);i++)
+      ObjectDelete(HorrorLines[i]);
+   DeleteButtons();
 //ObjectsDeleteAll(0);
   }
 //+------------------------------------------------------------------+
@@ -81,42 +165,13 @@ void OnDeinit(const int reason)
 void OnTick()
   {
 //---
-   if(!ObjectGet("HLine",OBJPROP_PRICE1))
-     {
-      HorizontalLinePrice=iHigh(NULL,PERIOD_CURRENT,1)+1*UsePoint;
-      ObjectCreate("HLine",OBJ_HLINE,0,Time[0],HorizontalLinePrice);
-      ObjectSet("HLine",OBJPROP_STYLE,LineStyle);
-      ObjectSet("HLine",OBJPROP_COLOR,LineColor);
-      ObjectSet("HLine",OBJPROP_WIDTH,1);
-      ObjectSetText("HLine","Move to place order",8,"Tahoma",Silver);
-      LastY=HorizontalLinePrice;
-     }
+// Check if correct objects are still on the chart (TODO: add/check return).
+   CheckObjects();
 
-   if(!ObjectGet("Button_BuyEntryOnHigh1",0))
-     {
-      CreateBtn(0,"Button_BuyEntryOnHigh1",0,20,60,20,0,"BHigh");
-     }
-   if(!ObjectGet("Button_BuyEntryOnClose1",0))
-     {
-      CreateBtn(0,"Button_BuyEntryOnClose1",70,20,60,20,0,"BClose");
-     }
-
-   if(!ObjectGet("Button_SellEntryOnLow1",0))
-     {
-      CreateBtn(0,"Button_SellEntryOnLow1",0,50,60,20,0,"SLow");
-     }
-
-   if(!ObjectGet("Button_SellEntryOnClose1",0))
-     {
-      CreateBtn(0,"Button_SellEntryOnClose1",70,50,60,20,0,"SClose");
-     }
-
-   if(!ObjectGet("Button_BringToBreakEven",0))
-     {
-      CreateBtn(0,"Button_BringToBreakEven",0,80,60,20,0,"BrkEven");
-     }
-
+// Get the latest price of the HLine object and update if needed.
    HorizontalLinePrice=ObjectGet("HLine",OBJPROP_PRICE1);
+
+// Prevent taking trades if line is selected and updates HLine price once unselected.
    if(HorizontalLinePrice!=LastY)
      {
       if(ObjectGet("HLine",OBJPROP_SELECTED))
@@ -126,19 +181,19 @@ void OnTick()
         }
       else
         {
-         ObjectSet("HLine",OBJPROP_STYLE,STYLE_SOLID);
-         ObjectSet("HLine",OBJPROP_WIDTH,2);
-         PriceAtClick=Bid;
+         //ObjectSet("HLine",OBJPROP_SELECTED,1);
+         ValidSetup=True;
          LastY=HorizontalLinePrice;
         }
      }
 
-   if(PriceAtClick>0)
+// Check and enter trade if parameters are valid.
+   if(ValidSetup)
      {
-      if(PriceAtClick<=HorizontalLinePrice && Bid>HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED))
+      if(isBuy && Bid>HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED) && TotalOrderCount(Symbol(),MagicNumber)==0)
         {
          Print("Opening Buy Trade...");
-         BuyIt();
+         BuyIt(); // TODO: add/check return value.
          Print(GetLastError());
          SetStop("StopBLine");
          if(UseTarget)
@@ -146,10 +201,10 @@ void OnTick()
          if(UseBreakEven)
             SetTarget("StopBLine","BreakEvenBLine");
         }
-      else if(PriceAtClick>=HorizontalLinePrice && Bid<HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED))
+      else if(isSell && Bid<HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED) && TotalOrderCount(Symbol(),MagicNumber)==0)
         {
          Print("Opening Sell Trade...");
-         SellIt();
+         SellIt(); // TODO: add/check return value.
          LastY=HorizontalLinePrice;
          Print(GetLastError());
          SetStop("StopSLine");
@@ -160,32 +215,9 @@ void OnTick()
         }
      }
 
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+// If we are in a trade manage it accordingly based on object locations.
    if(Ticket>0)
      {
-      if(ObjectGet("TargBLine",OBJPROP_SELECTED))
-        {
-         ObjectSet("TargBLine",OBJPROP_WIDTH,1);
-         ObjectSet("TargBLine",OBJPROP_STYLE,STYLE_DASH);
-        }
-      else
-        {
-         ObjectSet("TargBLine",OBJPROP_STYLE,STYLE_SOLID);
-         ObjectSet("TargBLine",OBJPROP_WIDTH,2);
-        }
-      if(ObjectGet("TargSLine",OBJPROP_SELECTED))
-        {
-         ObjectSet("TargSLine",OBJPROP_WIDTH,1);
-         ObjectSet("TargSLine",OBJPROP_STYLE,STYLE_DASH);
-        }
-      else
-        {
-         ObjectSet("TargSLine",OBJPROP_STYLE,STYLE_SOLID);
-         ObjectSet("TargSLine",OBJPROP_WIDTH,2);
-        }
-
       if(ObjectGet("TargBLine",OBJPROP_PRICE1)>0)
         {
          if(Bid>ObjectGet("TargBLine",OBJPROP_PRICE1) && !ObjectGet("TargBLine",OBJPROP_SELECTED))
@@ -250,38 +282,39 @@ void OnTick()
         }
      }
 
+// Check if trade closed and reset back to default.
+   if(TotalOrderCount(Symbol(),MagicNumber)==0 && ((ObjectGet("StopBLine",OBJPROP_PRICE1)>0) || (ObjectGet("StopSLine",OBJPROP_PRICE1)>0)))
+     {
+      Print("Trade closed out manually, resetting to defaults.\n");
+      ResetSetup();
+     }
+
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-
+/* ResetSetup()
+   If called it resets objects back to defaults.
+*/
 void ResetSetup()
   {
    Ticket=0;
-   ObjectDelete("HLine");
-   ObjectDelete("StopBLine");
-   ObjectDelete("StopSLine");
-   ObjectDelete("TargBLine");
-   ObjectDelete("TargSLine");
-   ObjectDelete("BreakEvenBLine");
-   ObjectDelete("BreakEvenSLine");
-   ObjectDelete("Button_BringToBreakEven");
-   HorizontalLinePrice=iHigh(NULL,PERIOD_CURRENT,1);
+   for(int i=0;i<ArraySize(HorrorLines);i++)
+      ObjectDelete(HorrorLines[i]);
+   HorizontalLinePrice=iHigh(NULL,PERIOD_CURRENT,1); // TODO: should be able to remove this code and CheckObjects() will sort this.
    ObjectCreate("HLine",OBJ_HLINE,0,Time[0],HorizontalLinePrice);
-   ObjectSet("HLine",OBJPROP_STYLE,LineStyle);
-   ObjectSet("HLine",OBJPROP_COLOR,Black);
-   ObjectSet("HLine",OBJPROP_WIDTH,2);
    ObjectSetText("HLine","Move to place order",8,"Tahoma",Silver);
+   LineDeactivate("HLine");
    LastY=HorizontalLinePrice;
-   PriceAtClick=0;
+   ValidSetup=False; // This doesn't happen if object is deleted/replaced?
+   isBuy=False;
+   isSell=False;
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+/* SetStop()
+*/
 void SetStop(string stopType)
   {
    if(stopType=="StopBLine")
@@ -293,9 +326,6 @@ void SetStop(string stopType)
       ObjectSetText(stopType,"Move to place stop order",8,"Tahoma",Silver);
       Print(GetLastError());
      }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
    else if(stopType=="StopSLine")
      {
       ObjectCreate(stopType,OBJ_HLINE,0,Time[0],iHigh(NULL,PERIOD_CURRENT,1));
@@ -421,13 +451,42 @@ void SellIt()
 
       OpenPrice=OrderOpenPrice();
      }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
    else
      {
       AtomicError("Ticket");
       BuyIt();
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+/* Object verification
+   Start of object verification to replace objects if they are removed from chart.
+*/
+void CheckObjects()
+  {
+   int i;
+
+   if(ObjectFind("HLine")<0)
+     {
+      Print("HLine removed, fixing...");
+      HorizontalLinePrice=iHigh(NULL,PERIOD_CURRENT,1)+1*UsePoint;
+      ObjectCreate("HLine",OBJ_HLINE,0,Time[0],HorizontalLinePrice);
+      ObjectSet("HLine",OBJPROP_STYLE,LineStyle);
+      ObjectSet("HLine",OBJPROP_COLOR,LineColor);
+      ObjectSet("HLine",OBJPROP_WIDTH,1);
+      ObjectSetText("HLine","Move to place order",8,"Tahoma",Silver);
+      LastY=HorizontalLinePrice;
+     }
+//TODO: make this into an array for easier management.
+   for(i=0;i<ArraySize(BTN);i++)
+     {
+      if(ObjectFind(BTN[i].name)<0)
+        {
+         Print("Button removed, fixing...");
+         DeleteButtons();
+         CreateButtons();
+        }
      }
   }
 //+------------------------------------------------------------------+
@@ -440,9 +499,75 @@ int AtomicError(string Err)
    return 0;
   }
 //+------------------------------------------------------------------+
+/* CreateButtons
+*/
+void CreateButtons()
+  {
+
+/*
+   struct buttons_struct
+   {
+      long id; // chart id always 0
+      string name; // object name
+      int x; // x coord.
+      int y; // y coord.
+      int w; // button width
+      int h; // button height
+      const ENUM_BASE_CORNER corner; // anchor always 0
+      string value; // value of button on screen
+   };
+*/
+
+   int i;
+
+   for(i=0;i<ArraySize(BTN);i++)
+     {
+      BTN[i].id=0;
+      BTN[i].name=button_names[i];
+      BTN[i].x=button_x_vals[i];
+      BTN[i].y=button_y_vals[i];
+      if(BTN[i].name=="Button_MoveUp" || BTN[i].name=="Button_MoveDown")
+         BTN[i].w=40;
+      else
+         BTN[i].w=85;
+      BTN[i].h=30;
+      BTN[i].corner=0;
+      BTN[i].value=button_vals[i];
+     }
+
+   for(i=0;i<ArraySize(BTN);i++)
+     {
+      CreateBtn(
+                BTN[i].id,
+                BTN[i].name,
+                BTN[i].x,
+                BTN[i].y,
+                BTN[i].w,
+                BTN[i].h,
+                BTN[i].corner,
+                BTN[i].value
+                );
+     }
+  }
 //+------------------------------------------------------------------+
-//| Create the Buy button                                                |
+//|                                                                  |
 //+------------------------------------------------------------------+
+/* DeleteButtons()
+*/
+void DeleteButtons()
+  {
+   int i;
+
+   for(i=0;i<ArraySize(BTN);i++)
+     {
+      ObjectDelete(BTN[i].id,BTN[i].name);
+     }
+  }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+/*
+*/
 bool CreateBtn(const long              chart_ID=0,// chart's ID
                const string            name="Button_BuyEntryOnHigh1",// button name
                const int               x=0,// X coordinate
@@ -451,10 +576,10 @@ bool CreateBtn(const long              chart_ID=0,// chart's ID
                const int               height=20,                // button height
                const ENUM_BASE_CORNER  corner=CORNER_LEFT_UPPER, // chart corner for anchoring
                const string            text="Buy",               // text
-               const string            font="Courier New",       // font
-               const int               font_size=10,             // font size
-               const color             clr=clrBlack,             // text color
-               const color             back_clr=clrGray,         // background color
+               const string            font="Arial",// font
+               const int               font_size=10,// font size
+               const color             clr=White,// text color 
+               const color             back_clr=Blue,// background color
                const bool              back=false                // in the background
                )
   {
@@ -477,9 +602,10 @@ bool CreateBtn(const long              chart_ID=0,// chart's ID
    return(true);
   }
 //+------------------------------------------------------------------+
-//+------------------------------------------------------------------+
-//| ChartEvent function                                              |
-//+------------------------------------------------------------------+
+
+/* OnChartEvent()
+   Primary actions/triggers for onclick events.
+*/
 void OnChartEvent(const int id,
                   const long &lparam,
                   const double &dparam,
@@ -488,29 +614,37 @@ void OnChartEvent(const int id,
 //---
    if(id==CHARTEVENT_OBJECT_CLICK)
      {
-      if(sparam=="Button_BuyEntryOnHigh1")
+      if(sparam=="Button_BuyEntryOnHigh")
         {
          ObjectSet("HLine",OBJPROP_PRICE1,iHigh(Symbol(),PERIOD_CURRENT,1)+1*UsePoint);
-         ObjectSetInteger(0,"Button_BuyEntryOnHigh1",OBJPROP_STATE,false);
          LastY=0;
+         isBuy=True;
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_BuyEntryOnHigh",OBJPROP_STATE,false);
         }
-      if(sparam=="Button_SellEntryOnLow1")
+      if(sparam=="Button_SellEntryOnLow")
         {
          ObjectSet("HLine",OBJPROP_PRICE1,iLow(Symbol(),PERIOD_CURRENT,1)-1*UsePoint);
-         ObjectSetInteger(0,"Button_Sell",OBJPROP_STATE,false);
          LastY=0;
+         isSell=True;
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_SellEntryOnLow",OBJPROP_STATE,false);
         }
-      if(sparam=="Button_BuyEntryOnClose1")
+      if(sparam=="Button_BuyEntryOnClose")
         {
          ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)+1*UsePoint);
-         ObjectSetInteger(0,"Button_Close",OBJPROP_STATE,false);
          LastY=0;
+         isBuy=True;
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_BuyEntryOnClose",OBJPROP_STATE,false);
         }
-      if(sparam=="Button_SellEntryOnClose1")
+      if(sparam=="Button_SellEntryOnClose") // SClose
         {
          ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)-1*UsePoint);
-         ObjectSetInteger(0,"Button_Reverse",OBJPROP_STATE,false);
          LastY=0;
+         isSell=True;
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_SellEntryOnClose",OBJPROP_STATE,false);
         }
       if(sparam=="Button_BringToBreakEven")
         {
@@ -518,8 +652,129 @@ void OnChartEvent(const int id,
             ObjectSet("StopSLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
          if(ObjectGet("StopBLine",0))
             ObjectSet("StopBLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
-         ObjectSetInteger(0,"Button_Reverse",OBJPROP_STATE,false);
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_BringToBreakEven",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_SelectLine")
+        {
+         int i;
+         int index=0;
+
+         // Get index of currently selected line.
+         for(i=0;i<ArraySize(HorrorLines);i++)
+           {
+            if(ObjectGet(HorrorLines[i],OBJPROP_SELECTED))
+              {
+               index=i;
+               Print("Current line selected "+HorrorLines[i]);
+              }
+           }
+
+         // If none or last object selected then select the first in array.
+         if(index==0 || index==ArraySize(HorrorLines))
+           {
+            if(!ObjectGet(HorrorLines[0],OBJPROP_SELECTED))
+              {
+               ObjectSet(HorrorLines[0],OBJPROP_SELECTED,1);
+               Print("Start/End using first line "+HorrorLines[0]+" index "+index+" ArraySize(HorrorLines) "+ArraySize(HorrorLines));
+              }
+            // Deselect current line and increment the index
+            else
+              {
+               ObjectSet(HorrorLines[0],OBJPROP_SELECTED,0);
+               index=index+1;
+               ObjectSet(HorrorLines[index],OBJPROP_SELECTED,1);
+              }
+           }
+         else
+           {
+            // Find the next line on chart and select it.
+            ObjectSet(HorrorLines[index],OBJPROP_SELECTED,0);
+            for(i=index+1;i<ArraySize(HorrorLines);i++)
+              {
+               if(ObjectGet(HorrorLines[i],0))
+                 {
+                  ObjectSet(HorrorLines[i],OBJPROP_SELECTED,1);
+                  Print("Selected next line "+HorrorLines[i]);
+                  break;
+                 }
+              }
+           }
+         ObjectSetInteger(0,"Button_SelectLine",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_MoveUp")
+        {
+         int i;
+
+         // Get index of currently selected line.
+         for(i=0;i<ArraySize(HorrorLines);i++)
+           {
+            if(ObjectGet(HorrorLines[i],OBJPROP_SELECTED))
+              {
+               double currentPrice=ObjectGet(HorrorLines[i],OBJPROP_PRICE1);
+               if(currentPrice>0)
+                  ObjectSet(HorrorLines[i],OBJPROP_PRICE1,currentPrice+(1*UsePoint));
+               //Print("Current line selected "+HorrorLines[i]);
+              }
+           }
+         ObjectSetInteger(0,"Button_MoveUp",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_MoveDown")
+        {
+         int i;
+
+         // Get index of currently selected line.
+         for(i=0;i<ArraySize(HorrorLines);i++)
+           {
+            if(ObjectGet(HorrorLines[i],OBJPROP_SELECTED))
+              {
+               double currentPrice=ObjectGet(HorrorLines[i],OBJPROP_PRICE1);
+               if(currentPrice>0)
+                  ObjectSet(HorrorLines[i],OBJPROP_PRICE1,currentPrice-(1*UsePoint));
+               //Print("Current line selected "+HorrorLines[i]);
+              }
+           }
+         ObjectSetInteger(0,"Button_MoveDown",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_ActEntry")
+        {
+         LineActivate("HLine");
+         ObjectSetInteger(0,"Button_ActEntry",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_DeactEntry")
+        {
+         LineDeactivate("HLine");
+         ObjectSetInteger(0,"Button_DeactEntry",OBJPROP_STATE,false);
+        }
+      if(sparam=="Button_CloseTrade")
+        {
+         if(TotalOrderCount(Symbol(),MagicNumber)>0)
+           {
+            Print("isBuy="+isBuy+", isSell="+isSell);
+            if(isBuy)
+               CloseBuyOrder(Symbol(),Ticket,GetSlippage(Symbol(),3));
+            else if(isSell)
+               CloseSellOrder(Symbol(),Ticket,GetSlippage(Symbol(),3));
+           }
+         else
+            AtomicError("No trade found, please close manually");
         }
      }
+  }
+//+------------------------------------------------------------------+
+
+void LineActivate(string aLine)
+  {
+   ObjectSet(aLine,OBJPROP_STYLE,STYLE_SOLID);
+   ObjectSet(aLine,OBJPROP_WIDTH,2);
+   ObjectSet(aLine,OBJPROP_SELECTED,0);
+  }
+//+------------------------------------------------------------------+
+void LineDeactivate(string aLine)
+  {
+   ObjectSet(aLine,OBJPROP_STYLE,STYLE_DASH);
+   ObjectSet(aLine,OBJPROP_WIDTH,1);
+   ObjectSet(aLine,OBJPROP_SELECTED,1);
+   ObjectSet(aLine,OBJPROP_COLOR,LineColor);
   }
 //+------------------------------------------------------------------+
