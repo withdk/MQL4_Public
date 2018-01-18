@@ -5,8 +5,12 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2017, David Kierznowski"
 #property link      "https://www.mql5.com"
-#property version   "1.03"
+#property version   "1.04"
 #property strict
+
+/* Change log
+v1.04 Fixed bug where the entry line bid price would not update or unselect.
+*/
 
 #include <DKSpecialInclude.mqh>
 
@@ -124,9 +128,9 @@ void OnTick()
         {
          ObjectSet("HLine",OBJPROP_STYLE,STYLE_SOLID);
          ObjectSet("HLine",OBJPROP_WIDTH,2);
+         PriceAtClick=Bid;
+         LastY=HorizontalLinePrice;
         }
-      PriceAtClick=Bid;
-      LastY=HorizontalLinePrice;
      }
 
    if(PriceAtClick>0)
