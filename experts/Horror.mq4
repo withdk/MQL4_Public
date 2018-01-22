@@ -14,22 +14,42 @@
          Refactored the buttons code using structs, seems cleaner.
          Cleaned up code a bit and added some comments.
          Added Close Trade, Select lines, + and - buttons for further trade mgmt.
+   v1.05 Added line replacements to the correct pricing if accidentally removed.
+         Added user defined variable "AddPipsBeforeEntry" to adjust line price 
+         on button click.
+         Added spread to breakeven trigger or manual click.
 */
 
 #property copyright "Copyright 2017, David Kierznowski"
 #property link      "https://github.com/withdk"
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 
 #include <DKSpecialInclude.mqh>
 
+// User input args
 input double FixedLotSize=0.1;
+extern double AddPipsBeforeEntry=0.2;
 input const color LineColor=Black;
+input const color TargetColor=Blue;
+input const color StopColor=Red;
+input const color BrkEvenColor=Blue;
 input bool UseTarget=False;
 input bool UseBreakEven=True;
 input int LineStyle=STYLE_DASH;
 extern int MagicNumber=31337;
 extern double HorizontalLinePrice;
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+static double LastY;
+static int UseSlippage;
+static int Ticket=0;
+static double OpenPrice;
+double UsePoint;
+bool ValidSetup;
+bool isBuy;
+bool isSell;
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
@@ -118,20 +138,20 @@ string HorrorLines[]=
    "BreakEvenSLine"
   };
 
-static double LastY;
-static int UseSlippage;
-static int Ticket=0;
-static double OpenPrice;
-double UsePoint;
-bool ValidSetup;
-bool isBuy;
-bool isSell;
+// Used for replacing lines to the correct values if accidentally removed.
+struct lines_struct
+  {
+   double            entrylvl;
+   double            targetlvl;
+   double            stoplvl;
+   double            brkevenlvl;
+  };
+lines_struct LINES[1];
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
 //+------------------------------------------------------------------+
 int OnInit()
   {
-//---
    HorizontalLinePrice=iHigh(NULL,PERIOD_CURRENT,1)+1*UsePoint;
    ObjectCreate("HLine",OBJ_HLINE,0,Time[0],HorizontalLinePrice);
    ObjectSet("HLine",OBJPROP_STYLE,LineStyle);
@@ -145,8 +165,7 @@ int OnInit()
    isBuy=False;
    isSell=False;
    CreateButtons();
-   Print(GetLastError());
-//---
+   AddPipsBeforeEntry=AddPipsBeforeEntry*UsePoint;
    return(INIT_SUCCEEDED);
   }
 //+------------------------------------------------------------------+
@@ -157,7 +176,6 @@ void OnDeinit(const int reason)
    for(int i=0;i<ArraySize(HorrorLines);i++)
       ObjectDelete(HorrorLines[i]);
    DeleteButtons();
-//ObjectsDeleteAll(0);
   }
 //+------------------------------------------------------------------+
 //| Expert tick function                                             |
@@ -190,28 +208,44 @@ void OnTick()
 // Check and enter trade if parameters are valid.
    if(ValidSetup)
      {
+      bool isOpenTrade;
+
       if(isBuy && Bid>HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED) && TotalOrderCount(Symbol(),MagicNumber)==0)
         {
          Print("Opening Buy Trade...");
-         BuyIt(); // TODO: add/check return value.
-         Print(GetLastError());
-         SetStop("StopBLine");
-         if(UseTarget)
-            SetTarget("StopBLine","TargBLine");
-         if(UseBreakEven)
-            SetTarget("StopBLine","BreakEvenBLine");
+         isOpenTrade=BuyIt(); // TODO: add/check return value.
+
+         if(isOpenTrade)
+           {
+            // populate lines struct and create lines
+            LINES[0].entrylvl=OpenPrice;
+            LINES[0].stoplvl=SetStop("StopBLine");
+            if(UseTarget)
+               LINES[0].targetlvl=SetTarget("StopBLine","TargBLine");
+            if(UseBreakEven)
+               LINES[0].brkevenlvl=SetTarget("StopBLine","BreakEvenBLine");
+           }
+         else
+            Print(GetLastError());
         }
       else if(isSell && Bid<HorizontalLinePrice && !OrderSelect(Ticket,SELECT_BY_TICKET) && !ObjectGet("HLine",OBJPROP_SELECTED) && TotalOrderCount(Symbol(),MagicNumber)==0)
         {
          Print("Opening Sell Trade...");
-         SellIt(); // TODO: add/check return value.
+         isOpenTrade=SellIt(); // TODO: add/check return value.
          LastY=HorizontalLinePrice;
-         Print(GetLastError());
-         SetStop("StopSLine");
-         if(UseTarget)
-            SetTarget("StopSLine","TargSLine");
-         if(UseBreakEven)
-            SetTarget("StopSLine","BreakEvenSLine");
+
+         if(isOpenTrade)
+           {
+            // populate lines struct and create lines
+            LINES[0].entrylvl=OpenPrice;
+            LINES[0].stoplvl=SetStop("StopSLine");
+            if(UseTarget)
+               LINES[0].targetlvl=SetTarget("StopSLine","TargSLine");
+            if(UseBreakEven)
+               LINES[0].brkevenlvl=SetTarget("StopSLine","BreakEvenSLine");
+           }
+         else
+            Print(GetLastError());
         }
      }
 
@@ -265,7 +299,8 @@ void OnTick()
         {
          if(Bid>=ObjectGet("BreakEvenBLine",OBJPROP_PRICE1) && !ObjectGet("BreakEvenBLine",OBJPROP_SELECTED))
            {
-            ObjectSet("StopBLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
+            ObjectSet("StopBLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1)+(MODE_SPREAD*UsePoint));
+            Print("UsePoint " + MODE_SPREAD);
             ObjectDelete("BreakEvenBLine");
             Print("Price hit breakeven, moving stop.");
            }
@@ -275,7 +310,7 @@ void OnTick()
         {
          if(Bid<=ObjectGet("BreakEvenSLine",OBJPROP_PRICE1) && !ObjectGet("BreakEvenSLine",OBJPROP_SELECTED))
            {
-            ObjectSet("StopSLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
+            ObjectSet("StopSLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1)-(MODE_SPREAD*UsePoint));
             ObjectDelete("BreakEvenSLine");
             Print("Price hit breakeven, moving stop.");
            }
@@ -309,109 +344,108 @@ void ResetSetup()
    ValidSetup=False; // This doesn't happen if object is deleted/replaced?
    isBuy=False;
    isSell=False;
+   LINES[0].entrylvl=0;
+   LINES[0].targetlvl=0;
+   LINES[0].stoplvl=0;
+   LINES[0].brkevenlvl=0;
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
 /* SetStop()
 */
-void SetStop(string stopType)
+double SetStop(string stopType)
   {
+   double stop;
+
    if(stopType=="StopBLine")
      {
       ObjectCreate(stopType,OBJ_HLINE,0,Time[0],iLow(NULL,PERIOD_CURRENT,1));
       ObjectSet(stopType,OBJPROP_STYLE,LineStyle);
-      ObjectSet(stopType,OBJPROP_COLOR,Red);
+      ObjectSet(stopType,OBJPROP_COLOR,StopColor);
       ObjectSet(stopType,OBJPROP_WIDTH,2);
       ObjectSetText(stopType,"Move to place stop order",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(iLow(NULL,PERIOD_CURRENT,1));
      }
    else if(stopType=="StopSLine")
      {
       ObjectCreate(stopType,OBJ_HLINE,0,Time[0],iHigh(NULL,PERIOD_CURRENT,1));
-      ObjectSet(stopType,OBJPROP_STYLE,LineStyle);
+      ObjectSet(stopType,OBJPROP_STYLE,StopColor);
       ObjectSet(stopType,OBJPROP_COLOR,Red);
       ObjectSet(stopType,OBJPROP_WIDTH,2);
       ObjectSetText(stopType,"Move to place stop order",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(iHigh(NULL,PERIOD_CURRENT,1));
      }
+   return(0);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 
-void SetTarget(string stopType,string targetType)
+double SetTarget(string stopType,string targetType)
   {
    double target;
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+
    if(stopType=="StopBLine")
      {
       target=Bid+(ObjectGet("HLine",OBJPROP_PRICE1)-ObjectGet(stopType,OBJPROP_PRICE1));
       Print("Target initially set to "+string(target));
       ObjectCreate(targetType,OBJ_HLINE,0,Time[0],target);
       ObjectSet(targetType,OBJPROP_STYLE,LineStyle);
-      ObjectSet(targetType,OBJPROP_COLOR,Blue);
+      ObjectSet(targetType,OBJPROP_COLOR,TargetColor);
       ObjectSet(targetType,OBJPROP_WIDTH,2);
       ObjectSetText(targetType,"Move to place target order",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(target);
      }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
    else if(stopType=="StopSLine")
      {
       target=Bid-(ObjectGet(stopType,OBJPROP_PRICE1)-ObjectGet("HLine",OBJPROP_PRICE1));
       Print("Target initially set to "+string(target));
       ObjectCreate(targetType,OBJ_HLINE,0,Time[0],target);
       ObjectSet(targetType,OBJPROP_STYLE,LineStyle);
-      ObjectSet(targetType,OBJPROP_COLOR,Blue);
+      ObjectSet(targetType,OBJPROP_COLOR,TargetColor);
       ObjectSet(targetType,OBJPROP_WIDTH,2);
       ObjectSetText(targetType,"Move to place target order",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(target);
      }
+   return(0);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-void SetBreakEven(string stopType,string targetType)
+double SetBreakEven(string stopType,string targetType)
   {
    double target;
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
+
    if(stopType=="BreakEvenBLine")
      {
       target=Bid+(ObjectGet("HLine",OBJPROP_PRICE1)-ObjectGet(stopType,OBJPROP_PRICE1));
       Print("Breakeven initially set to "+string(target));
       ObjectCreate(targetType,OBJ_HLINE,0,Time[0],target);
       ObjectSet(targetType,OBJPROP_STYLE,LineStyle);
-      ObjectSet(targetType,OBJPROP_COLOR,Blue);
+      ObjectSet(targetType,OBJPROP_COLOR,BrkEvenColor);
       ObjectSet(targetType,OBJPROP_WIDTH,2);
       ObjectSetText(targetType,"Move to adjust breakeven price",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(target);
      }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
    else if(stopType=="BreakEvenSLine")
      {
       target=Bid-(ObjectGet(stopType,OBJPROP_PRICE1)-ObjectGet("HLine",OBJPROP_PRICE1));
       Print("Breakeven initially set to "+string(target));
       ObjectCreate(targetType,OBJ_HLINE,0,Time[0],target);
       ObjectSet(targetType,OBJPROP_STYLE,LineStyle);
-      ObjectSet(targetType,OBJPROP_COLOR,Blue);
+      ObjectSet(targetType,OBJPROP_COLOR,BrkEvenColor);
       ObjectSet(targetType,OBJPROP_WIDTH,2);
       ObjectSetText(targetType,"Move to adjust breakeven price",8,"Tahoma",Silver);
-      Print(GetLastError());
+      return(target);
      }
+   return(0);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
-void BuyIt()
+bool BuyIt()
   {
    Ticket=OpenBuyOrder(Symbol(),FixedLotSize,UseSlippage,MagicNumber);
 //+------------------------------------------------------------------+
@@ -423,22 +457,21 @@ void BuyIt()
          AtomicError("OrderSelect");
 
       OpenPrice=OrderOpenPrice();
+      return(True);
      }
-//+------------------------------------------------------------------+
-//|                                                                  |
-//+------------------------------------------------------------------+
    else
      {
       AtomicError("Ticket");
       BuyIt();
      }
+   return(False);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 
-void SellIt()
+bool SellIt()
   {
    Ticket=OpenSellOrder(Symbol(),FixedLotSize,UseSlippage,MagicNumber);
 //+------------------------------------------------------------------+
@@ -450,12 +483,14 @@ void SellIt()
          AtomicError("OrderSelect");
 
       OpenPrice=OrderOpenPrice();
+      return(True);
      }
    else
      {
       AtomicError("Ticket");
       BuyIt();
      }
+   return(False);
   }
 //+------------------------------------------------------------------+
 //|                                                                  |
@@ -478,8 +513,76 @@ void CheckObjects()
       ObjectSetText("HLine","Move to place order",8,"Tahoma",Silver);
       LastY=HorizontalLinePrice;
      }
+//Replace other lines if removed.
+/*
+   "HLine",
+   "StopBLine",
+   "StopSLine",
+   "TargBLine",
+   "TargSLine",
+   "BreakEvenBLine",
+   "BreakEvenSLine"
+*/
+   for(int i=0;i<ArraySize(HorrorLines);i++)
+     {
+      if(ObjectFind(HorrorLines[i])<0)
+        {
+         double moveline;
+         color aColor;
+
+         if(isBuy)
+           {
+            if(LINES[0].stoplvl>0 && HorrorLines[i]=="StopBLine")
+              {
+               moveline=LINES[0].stoplvl;
+               aColor=StopColor;
+              }
+            if(LINES[0].targetlvl>0 && HorrorLines[i]=="TargBLine")
+              {
+               moveline=LINES[0].targetlvl;
+               aColor=TargetColor;
+              }
+            if(LINES[0].brkevenlvl>0 && HorrorLines[i]=="BreakEvenBLine")
+              {
+               moveline=LINES[0].brkevenlvl;
+               aColor=BrkEvenColor;
+              }
+           }
+         else if(isSell)
+           {
+            if(LINES[0].stoplvl>0 && HorrorLines[i]=="StopSLine")
+              {
+               moveline=LINES[0].stoplvl;
+               aColor=StopColor;
+              }
+            if(LINES[0].targetlvl>0 && HorrorLines[i]=="TargSLine")
+              {
+               moveline=LINES[0].targetlvl;
+               aColor=TargetColor;
+              }
+            if(LINES[0].brkevenlvl>0 && HorrorLines[i]=="BreakEvenSLine")
+              {
+               moveline=LINES[0].brkevenlvl;
+               aColor=BrkEvenColor;
+              }
+           }
+
+         if(moveline>0)
+           {
+            ObjectCreate(HorrorLines[i],OBJ_HLINE,0,Time[0],moveline);
+            ObjectSet(HorrorLines[i],OBJPROP_STYLE,LineStyle);
+            ObjectSet(HorrorLines[i],OBJPROP_COLOR,aColor);
+            LineActivate(HorrorLines[i]);
+           }
+
+        }
+     }
+
 //TODO: make this into an array for easier management.
    for(i=0;i<ArraySize(BTN);i++)
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
      {
       if(ObjectFind(BTN[i].name)<0)
         {
@@ -616,45 +719,61 @@ void OnChartEvent(const int id,
      {
       if(sparam=="Button_BuyEntryOnHigh")
         {
-         ObjectSet("HLine",OBJPROP_PRICE1,iHigh(Symbol(),PERIOD_CURRENT,1)+1*UsePoint);
+         ObjectSet("HLine",OBJPROP_PRICE1,iHigh(Symbol(),PERIOD_CURRENT,1)+AddPipsBeforeEntry);
          LastY=0;
          isBuy=True;
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_BuyEntryOnHigh",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_SellEntryOnLow")
         {
-         ObjectSet("HLine",OBJPROP_PRICE1,iLow(Symbol(),PERIOD_CURRENT,1)-1*UsePoint);
+         ObjectSet("HLine",OBJPROP_PRICE1,iLow(Symbol(),PERIOD_CURRENT,1)-AddPipsBeforeEntry);
          LastY=0;
          isSell=True;
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_SellEntryOnLow",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_BuyEntryOnClose")
         {
-         ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)+1*UsePoint);
+         ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)+AddPipsBeforeEntry);
          LastY=0;
          isBuy=True;
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_BuyEntryOnClose",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_SellEntryOnClose") // SClose
         {
-         ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)-1*UsePoint);
+         ObjectSet("HLine",OBJPROP_PRICE1,iClose(Symbol(),PERIOD_CURRENT,1)-AddPipsBeforeEntry);
          LastY=0;
          isSell=True;
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_SellEntryOnClose",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_BringToBreakEven")
         {
          if(ObjectGet("StopSLine",0))
-            ObjectSet("StopSLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
+            ObjectSet("StopSLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1)-(MODE_SPREAD*UsePoint));
          if(ObjectGet("StopBLine",0))
-            ObjectSet("StopBLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1));
+            ObjectSet("StopBLine",OBJPROP_PRICE1,ObjectGet("HLine",OBJPROP_PRICE1)+(MODE_SPREAD*UsePoint));
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_BringToBreakEven",OBJPROP_STATE,false);
+         //Print(MODE_SPREAD*UsePoint);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_SelectLine")
         {
          int i;
@@ -702,6 +821,9 @@ void OnChartEvent(const int id,
            }
          ObjectSetInteger(0,"Button_SelectLine",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_MoveUp")
         {
          int i;
@@ -719,6 +841,9 @@ void OnChartEvent(const int id,
            }
          ObjectSetInteger(0,"Button_MoveUp",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_MoveDown")
         {
          int i;
@@ -736,16 +861,25 @@ void OnChartEvent(const int id,
            }
          ObjectSetInteger(0,"Button_MoveDown",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_ActEntry")
         {
          LineActivate("HLine");
          ObjectSetInteger(0,"Button_ActEntry",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_DeactEntry")
         {
          LineDeactivate("HLine");
          ObjectSetInteger(0,"Button_DeactEntry",OBJPROP_STATE,false);
         }
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
       if(sparam=="Button_CloseTrade")
         {
          if(TotalOrderCount(Symbol(),MagicNumber)>0)
