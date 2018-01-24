@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2017, David Kierznowski"
 #property link      "https://github.com/withdk"
-#property version   "1.00"
+#property version   "1.02"
 #property strict
 #property indicator_chart_window
 
@@ -19,10 +19,21 @@
    
    Changelog
    v1.00 Basic proof of concept.
+   v1.01 Add feature to change target using closing prices not high/low.
+         Click the same bar twice to adjust. Three times to remove lines.
+         Added user defined colours.
+   v1.02 Added candle countdown timer.
 */
 
+input bool UseTimer=True;
+input color CountDownColor=Blue;
+input color VerticalColor=Blue;
+input color targ1color=Blue;
+input color targ2color=Blue;
+input color targ3color=Blue;
 
 double UsePoint;
+int itCounter;
 //+------------------------------------------------------------------+
 //| Custom indicator initialization function                         |
 //+------------------------------------------------------------------+
@@ -46,6 +57,17 @@ int OnCalculate(const int rates_total,
                 const int &spread[])
   {
 //---
+   if(UseTimer)
+     {
+      // Taken from https://www.forexfactory.com/showthread.php?t=326577
+      string textname="CountDown";
+      ObjectDelete(0,textname);
+      ObjectCreate(textname,OBJ_LABEL,0,0,0);
+      ObjectSetText(textname,GetCandleTimer(),36,"Corbel Bold",CountDownColor);
+      ObjectSet(textname,OBJPROP_CORNER,1);
+      ObjectSet(textname,OBJPROP_XDISTANCE,15);
+      ObjectSet(textname,OBJPROP_YDISTANCE,1);
+     }
 
 //--- return value of prev_calculated for next call
    return(rates_total);
@@ -84,6 +106,7 @@ void OnChartEvent(const int id,
 
          // We use iBarShift to retrieve the bar shift based on the datetime.
          int i=iBarShift(Symbol(),PERIOD_CURRENT,dt);
+
          if(i>0)
            {
             double OpenPrice=iOpen(Symbol(),PERIOD_CURRENT,i);
@@ -91,27 +114,93 @@ void OnChartEvent(const int id,
             double LowPrice=iLow(Symbol(),PERIOD_CURRENT,i);
             double ClosePrice=iClose(Symbol(),PERIOD_CURRENT,i);
             double target;
+            double target2;
+            double target3;
+            double stop=HighPrice-LowPrice;
 
             if(price>HighPrice) // calculate buy target
-               target=HighPrice+(HighPrice-LowPrice);
-            else
-               target=LowPrice-(HighPrice-LowPrice); // else sell
-            PrintFormat("bar number=%d, open=%G, high=%G, low=%G, close=%G, target=%G",i,OpenPrice,HighPrice,LowPrice,ClosePrice,target);
+              {
+               if(itCounter==1)
+                 {
+                  if(ClosePrice>OpenPrice)
+                    {
+                     stop=ClosePrice-LowPrice;
+                     PrintFormat("stop is %G - %G",ClosePrice,LowPrice);
+                     target=ClosePrice+stop;
+                     PrintFormat("target is %G + %G + %d",ClosePrice,stop,MODE_SPREAD);
+                    }
+                  else
+                    {
+                     stop=OpenPrice-LowPrice;
+                     target=OpenPrice+stop;
+                    }
+                 }
+               else
+                 {
+                  target=HighPrice+stop;
+                 }
+               target2=target+stop;
+               target3=target2+stop;
+              }
+            else // calculate sell target
+              {
+               if(itCounter==1)
+                 {
+                  if(ClosePrice<OpenPrice)
+                    {
+                     stop=HighPrice-ClosePrice;
+                     target=ClosePrice-stop;
+                    }
+                  else
+                    {
+                     stop=HighPrice-OpenPrice;
+                     target=OpenPrice-stop;
+                    }
+                 }
+               else
+                 {
+                  target=LowPrice-stop;
+                 }
+               target2=target-stop;
+               target3=target2-stop;
+              }
+            PrintFormat("bar number=%d, open=%G, high=%G, low=%G, close=%G, stop=%G, target=%G, target2=%G",i,OpenPrice,HighPrice,LowPrice,ClosePrice,stop,target,target2);
+            PrintFormat("Candle close in %s seconds",GetCandleTimer());
 
             //--- delete lines
-            ObjectDelete(0,"V Line");
-            ObjectDelete(0,"H Line");
+            ObjectDelete(0,"TQVLine");
+            ObjectDelete(0,"TQHLine");
+            //ObjectDelete(0,"TQVLine2");
+            ObjectDelete(0,"TQHLine2");
+            ObjectDelete(0,"TQHLine3");
             //--- create horizontal and vertical lines of the crosshair
-            ObjectCreate(0,"H Line",OBJ_HLINE,window,dt,target);
-            ObjectCreate(0,"V Line",OBJ_VLINE,window,dt,target);
+            ObjectCreate(0,"TQHLine",OBJ_HLINE,window,dt,target);
+            ObjectCreate(0,"TQVLine",OBJ_VLINE,window,dt,target);
+            ObjectCreate(0,"TQHLine2",OBJ_HLINE,window,dt,target2);
+            ObjectCreate(0,"TQHLine3",OBJ_HLINE,window,dt,target3);
+            ObjectSet("TQVLine",OBJPROP_COLOR,VerticalColor);
+            ObjectSet("TQHLine",OBJPROP_COLOR,targ1color);
+            ObjectSet("TQHLine2",OBJPROP_COLOR,targ2color);
+            ObjectSet("TQHLine3",OBJPROP_COLOR,targ3color);
+            //ObjectCreate(0,"TQVLine2",OBJ_VLINE,window,dt,target2);
             ChartRedraw(0);
+            if(itCounter>2) // 1. i=iBarShift!=itCounter, 2. 
+              {
+               ObjectDelete(0,"TQVLine");
+               ObjectDelete(0,"TQHLine");
+               //ObjectDelete(0,"TQVLine2");
+               ObjectDelete(0,"TQHLine2");
+               ObjectDelete(0,"TQHLine3");
+               itCounter=0;
+              }
+            itCounter=itCounter+1;
            }
          //--- delete lines
-         //ObjectDelete(0,"V Line");
-         //ObjectDelete(0,"H Line");
+         //ObjectDelete(0,"TQVLine");
+         //ObjectDelete(0,"TQHLine");
          //--- create horizontal and vertical lines of the crosshair
-         //ObjectCreate(0,"H Line",OBJ_HLINE,window,dt,price);
-         //ObjectCreate(0,"V Line",OBJ_VLINE,window,dt,price);
+         //ObjectCreate(0,"TQHLine",OBJ_HLINE,window,dt,price);
+         //ObjectCreate(0,"TQVLine",OBJ_VLINE,window,dt,price);
          //ChartRedraw(0);
         }
       else
@@ -133,5 +222,15 @@ double PipPoint(string Currency)
       CalcPoint=1; // DK TEST for 0 digits
 
    return(CalcPoint);
+  }
+//+------------------------------------------------------------------+
+/* GetCandleTimer()
+   Code snippet from https://www.mql5.com/en/forum/157277.
+*/
+string GetCandleTimer()
+  {
+   datetime beginOfBar=Time[0];
+   datetime endOfBar=beginOfBar+60*_Period;
+   return(IntegerToString((int)endOfBar-(int)TimeCurrent())); // Could go negative
   }
 //+------------------------------------------------------------------+
