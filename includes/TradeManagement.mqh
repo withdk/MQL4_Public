@@ -126,7 +126,7 @@ void tpCowabungaTakeProfit(string argMagicNumber,double argOpenPrice,double &arg
                locFirstTarget=MathRound(argOpenPrice/100)*100; // 13300 (entry 13305)
                locFirstTarget=locFirstTarget*UsePoint;
                argOpenPrice=argOpenPrice*UsePoint;
-               
+
 
                Print("locFirstTarget rounded "+locFirstTarget); // 13300
                Print("argTakeProfitPrice "+argTakeProfitPrice); // 13340
@@ -441,48 +441,49 @@ bool slUseAverageRange()
       //+------------------------------------------------------------------+
       //|                                                                  |
       //+------------------------------------------------------------------+
-      else if(Signal==2)
-        {
-         if(slOpenOne>0)
+      else
+         if(Signal==2)
            {
-            if(Bid<CalcSellTakeProfit(Symbol(),slOpenOne,OpenPrice))
+            if(slOpenOne>0)
               {
-               Print("Opening second sell position.");
-               SellIt();
-               slOpenOne=0;
-               slPrice=iATR(NULL,0,20,1)*2;
-               slPrice=slPrice/PipPoint(Symbol());
+               if(Bid<CalcSellTakeProfit(Symbol(),slOpenOne,OpenPrice))
+                 {
+                  Print("Opening second sell position.");
+                  SellIt();
+                  slOpenOne=0;
+                  slPrice=iATR(NULL,0,20,1)*2;
+                  slPrice=slPrice/PipPoint(Symbol());
+                 }
+              }
+            if(slOpenTwo>0)
+              {
+               if(Bid<CalcSellTakeProfit(Symbol(),slOpenTwo,OpenPrice))
+                 {
+                  Print("Opening third sell position.");
+                  SellIt();
+                  slOpenTwo=0;
+                  slPrice=iATR(NULL,0,20,1)*2;
+                  slPrice=slPrice/PipPoint(Symbol());
+                 }
+              }
+            if(slOpenThree>0)
+              {
+               if(Bid<CalcSellTakeProfit(Symbol(),slOpenThree,OpenPrice))
+                 {
+                  Print("Opening fourth sell position.");
+                  SellIt();
+                  slOpenThree=0;
+                  slPrice=iATR(NULL,0,20,1)*2;
+                  slPrice=slPrice/PipPoint(Symbol());
+                 }
+              }
+            SellStopLoss=CalcSellStopLoss(Symbol(),slPrice,OpenPrice);
+            if(Bid>SellStopLoss && SellStopLoss>0)
+              {
+               Print("in slUseAverageRange() closing all sell orders at "+SellStopLoss);
+               return(CloseAllSellOrders(Symbol(),MagicNumber,UseSlippage));
               }
            }
-         if(slOpenTwo>0)
-           {
-            if(Bid<CalcSellTakeProfit(Symbol(),slOpenTwo,OpenPrice))
-              {
-               Print("Opening third sell position.");
-               SellIt();
-               slOpenTwo=0;
-               slPrice=iATR(NULL,0,20,1)*2;
-               slPrice=slPrice/PipPoint(Symbol());
-              }
-           }
-         if(slOpenThree>0)
-           {
-            if(Bid<CalcSellTakeProfit(Symbol(),slOpenThree,OpenPrice))
-              {
-               Print("Opening fourth sell position.");
-               SellIt();
-               slOpenThree=0;
-               slPrice=iATR(NULL,0,20,1)*2;
-               slPrice=slPrice/PipPoint(Symbol());
-              }
-           }
-         SellStopLoss=CalcSellStopLoss(Symbol(),slPrice,OpenPrice);
-         if(Bid>SellStopLoss && SellStopLoss>0)
-           {
-            Print("in slUseAverageRange() closing all sell orders at "+SellStopLoss);
-            return(CloseAllSellOrders(Symbol(),MagicNumber,UseSlippage));
-           }
-        }
      }
    return(False);
   }
@@ -514,8 +515,9 @@ bool slFixedStop(int argSignal)
                return(CloseSellOrder(Symbol(),Ticket,UseSlippage));
               }
            }
+         break;
       default:
-         Print("slFixedStop() switch(Signal)");
+         Print("slFixedStop() switch(" + Signal + ")");
      }
    return(False);
   }
@@ -558,8 +560,40 @@ bool slDynStop(int argSignal,double argDynStopLoss)
 //+------------------------------------------------------------------+
 //|                                                                  |
 //+------------------------------------------------------------------+
+bool slPriceStop(int argSignal, double argStopPrice)
+  {
+   switch(argSignal)
+     {
+      case 0:
+         break;
+      case 1:
+         if(argStopPrice>0)
+           {
+            if(Bid<argStopPrice)
+              {
+               return(CloseBuyOrder(Symbol(),Ticket,UseSlippage));
+              }
+           }
+         break;
+      case 2:
+         if(StopLoss>0)
+           {
+            if(Bid>argStopPrice)
+              {
+               return(CloseSellOrder(Symbol(),Ticket,UseSlippage));
+              }
+           }
+         break;
+      default:
+         Print("slFixedStop() switch(" + Signal + ")");
+     }
+   return(False);
+  }
 //+------------------------------------------------------------------+
 
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 void ReverseSetup()
   {
    if(CheckAttempts<NumOfAttempts && NumOfAttempts>0) // 0:T, 1:T
@@ -576,11 +610,12 @@ void ReverseSetup()
       //+------------------------------------------------------------------+
       //|                                                                  |
       //+------------------------------------------------------------------+
-      else if(Signal==2)
-        {
-         Signal=1; // was a sell so buy
-         BuyIt();
-        }
+      else
+         if(Signal==2)
+           {
+            Signal=1; // was a sell so buy
+            BuyIt();
+           }
      }
    CheckAttempts++;
   }
@@ -589,6 +624,9 @@ void ReverseSetup()
 //+------------------------------------------------------------------+
 //+------------------------------------------------------------------+
 
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 void GetSpreadSize()
   {
    if(Point==PipPoint(Symbol()))
@@ -645,19 +683,22 @@ bool cValidTradeTime(string argStartTime,string argEndTime) // e.g. "15:25"
 //+------------------------------------------------------------------+
 bool cValidTradeSize(double maxPips)
   {
-/*if(TakeProfitMethod==e_tpTrailCandles)
-     {
-      double high=iHigh(Symbol(),PERIOD_M30,1);
-      double low=iLow(Symbol(),PERIOD_M30,1);
+   /*if(TakeProfitMethod==e_tpTrailCandles)
+        {
+         double high=iHigh(Symbol(),PERIOD_M30,1);
+         double low=iLow(Symbol(),PERIOD_M30,1);
 
-      double pips=CalcDistanceInPoints(high,low);
-      Print(pips);
-      return(pips<maxPips);
-     }*/
+         double pips=CalcDistanceInPoints(high,low);
+         Print(pips);
+         return(pips<maxPips);
+        }*/
    return(True);
   }
 //+------------------------------------------------------------------+
 
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 bool calcNCandleStop(int argMagicNumber,int argSignal,int argCandleCount,double &argPrice,bool argNewCandle,int argIndex)
   {
    if(SetupEntry>0 && argNewCandle)
@@ -759,6 +800,9 @@ bool calcTwoCandleStop(int argMagicNumber,int argSignal,int &argCandleCount,doub
   }
 //+------------------------------------------------------------------+
 
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 bool calcTwoCandleStopWithTrade(int argMagicNumber,int argSignal,int &argCandleCount,double &argPrice,bool argNewCandle)
   {
    if(TotalOrderCount(Symbol(),argMagicNumber)>0 && argNewCandle)
@@ -811,6 +855,9 @@ bool calcTwoCandleStopWithTrade(int argMagicNumber,int argSignal,int &argCandleC
   }
 //+------------------------------------------------------------------+
 
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
 double calcEntryPrice(int argSignal,int argIndex)
   {
    int locHighest;
@@ -837,5 +884,25 @@ double calcEntryPrice(int argSignal,int argIndex)
      }
 
    return(locEntry);
+  }
+//+------------------------------------------------------------------+
+
+
+//+------------------------------------------------------------------+
+//|                                                                  |
+//+------------------------------------------------------------------+
+int GetRandomMagicNumber()
+  {
+   int rounds = 5;
+   int aMagicNumber = WindowHandle(NULL, 0);
+   
+   for (int i = 0; i<rounds; i++)
+   {
+      MathSrand(GetTickCount());
+      aMagicNumber = aMagicNumber + MathRand();
+      Sleep(100);
+   }
+   
+   return(aMagicNumber);
   }
 //+------------------------------------------------------------------+
