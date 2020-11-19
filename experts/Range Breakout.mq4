@@ -5,11 +5,11 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2017, David Kierznowski"
 #property link      "https://github.com/withdk"
-#property version   "1.00"
+#property version   "1.01"
 #property strict
 
 #define APP_NAME     "Range Breakout"
-#define APP_VERSION  "1.00"
+#define APP_VERSION  "1.01"
 
 #include <DKSpecialInclude.mqh>
 #include <TradeManagement.mqh>
