@@ -43,10 +43,7 @@ v3.07 Added IsTradeAllowed() to prevent taking trades when the "context" is busy
       Added profit target to trade window.
 v3.08 Changed MODE_EMA to MODE_SMA
 
-v1.00 Modified v3.08 WS bot to UK100Club bot.
-      Example Signals:
-         29th September 	Sell CAD/JPY at 78.93 - Stop/Loss 80.32 (WEBSITE)
-         Signal: Sell AUD/NZD at 1.0490 - Stop/Loss 1.0629 (EMAIL)
+v1.01 Bug fix to correctly calculate range.
 */
 
 //+------------------------------------------------------------------+
