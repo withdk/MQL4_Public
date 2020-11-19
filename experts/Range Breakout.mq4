@@ -43,7 +43,10 @@ v3.07 Added IsTradeAllowed() to prevent taking trades when the "context" is busy
       Added profit target to trade window.
 v3.08 Changed MODE_EMA to MODE_SMA
 
-v1.00 Modified v3.08 WS bot to Range Breakout EA.
+v1.00 Modified v3.08 WS bot to UK100Club bot.
+      Example Signals:
+         29th September 	Sell CAD/JPY at 78.93 - Stop/Loss 80.32 (WEBSITE)
+         Signal: Sell AUD/NZD at 1.0490 - Stop/Loss 1.0629 (EMAIL)
 */
 
 //+------------------------------------------------------------------+
@@ -242,24 +245,24 @@ int start()
       //# Setup trade orders after endtime
       datetime stime = StrToTime(RangeStartTime);
       datetime etime = StrToTime(RangeEndTime);
-      if(TimeCurrent() > etime)
+      if(TimeCurrent() > etime && israngecalc == False)
         {
          startbarshift=iBarShift(NULL,0,stime, True);
          endbarshift=iBarShift(NULL,0,etime, True);
+         //Print("Got new range startshift: " + startbarshift);
+         //Print("Got new range endshift: " + endbarshift);
         }
 
       //# Get the range high/low prices if barshifts > 0 (validation check).
       if(startbarshift > 0 && endbarshift > 0 && israngecalc == False)
         {
-         //Print("currbarshift = " + currbarshift);
-         //Print("endbarshift = " + endbarshift);
          israngecalc = True;
-         startbarshift = startbarshift - 1;
-         int count = startbarshift-endbarshift; // = 3 - 1
-         int rangehighshift = iHighest(NULL,0,MODE_HIGH,2,endbarshift);
-         int rangelowshift = iLowest(NULL,0,MODE_LOW,2,endbarshift);
-         rangelow = iLow(NULL, 0,  rangelowshift);
+         // We can short cut by just using startshift + 1
+         int count = startbarshift + 1; // e.g. 3 or 4
+         int rangehighshift = iHighest(NULL,0,MODE_HIGH,count,0); 
+         int rangelowshift = iLowest(NULL,0,MODE_LOW,count,0); 
          rangehigh = iHigh(NULL, 0,  rangehighshift);
+         rangelow = iLow(NULL, 0,  rangelowshift);
          Print("Session rangelow = " + rangelow + " , rangehigh= " + rangehigh);
          //Print("rangelowshift = " + startbarshift + " , rangehighshift= " + endbarshift);
          CanTrade = True;
